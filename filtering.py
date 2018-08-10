@@ -159,6 +159,31 @@ class Filtering:
                 min_coords = self.structure.lattice.get_cartesian_coords(frac_coord)
         return min_coords
 
+    def get_min_distance(self, connected_nodes, loc):
+        str_formula = str(self.structure.species_and_occu[loc].formula)
+        nodes = np.array([node for node in connected_nodes \
+            if self.structure.species_and_occu[node] == self.structure.species_and_occu[loc]])
+
+        #get nearest magnetic_metal angle neighbors with a tolerance of 0.1 A.
+        lattice_species = [self.structure.species_and_occu[node] for node in nodes]
+        s = Structure(self.structure.lattice, lattice_species, self.frac_coords[nodes])
+        s.make_supercell([3,3,3])
+        new_frac_coords = np.round(s.frac_coords,decimals=3)
+        new_frac_coords[new_frac_coords == 1.] = 0.
+        distances = []
+        for i in range(len(new_frac_coords)):
+            distances.append(np.linalg.norm(s.lattice.get_cartesian_coords(new_frac_coords[i])-s.lattice.get_cartesian_coords([0.5,0.5,0.5])))
+
+        new_loc = np.argmin(distances)
+        loc_cart_coords = s.lattice.get_cartesian_coords(new_frac_coords[new_loc])
+
+        #identify the two closest same species to the specie under consideration (new_loc)
+        nodes = np.arange(len(s))
+        distances = [s.distance_matrix[node,new_loc] for node in nodes]
+        nodes = nodes[np.argsort(distances)]
+        distances = np.sort(distances)
+        return distances[1]
+
     def angle_calculation(self, connected_nodes, loc):
         angle = []
         nn_coords = []
@@ -279,6 +304,36 @@ class Filtering:
             if len(anions) != 0:
                 return True
         return False
+
+    def calculate_min_distance(self, G, dim):
+        #get minimum distance between the magnetic specie within the layer. Useful to separate for ex, edge sharing and corner sharing cuprate units in 1D chains
+        distance = {}
+        for loc in np.arange(0,len(self.structure),8):
+            specie = self.structure.species_and_occu[loc]
+            if self.check_3Dmetal(specie): #determine is the species is magnetic metal or not
+                rank_nodes = []
+                accepted_nodes = np.arange(8)+loc
+
+                try:
+                    connected_nodes = nx.node_connected_component(G,loc)
+                    for node in connected_nodes:
+                        if (node in accepted_nodes):
+                            rank_nodes.append(node)
+                except KeyError:
+                    continue
+    
+                rank_matrix = np.array([np.round(self.frac_coords[node],decimals=3) for node in rank_nodes])
+                rank_matrix = rank_matrix - rank_matrix[0]
+                rank = np.linalg.matrix_rank(rank_matrix)
+                if rank == dim: # and str_formula not in str_formulas: #only proceed if the magnetic metal is of the same dim
+                    #str_formulas.append(str_formula)
+
+                    # get min distance
+                    formula = str(self.structure.species_and_occu[loc].formula)
+                    if formula not in distance:
+                        distance[formula] = str(np.round(self.get_min_distance(connected_nodes, loc),decimals=3))
+        return distance
+
 
     def calculate_layers_angles_and_stuff(self, G, dim):
         #obtain information based on the bonding network. Dont mess with this function unless you really have to.
